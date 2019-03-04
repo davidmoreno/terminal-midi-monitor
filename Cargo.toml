@@ -1,0 +1,10 @@
+[package]
+name = "terminal-midi-monitor"
+version = "0.1.0"
+authors = ["David Moreno <dmoreno@coralbits.com>"]
+edition = "2018"
+
+[dependencies]
+
+alsa = "0.2.1"
+libc = "0.2"
