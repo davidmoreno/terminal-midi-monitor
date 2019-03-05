@@ -123,19 +123,19 @@ fn note_name(note: u8) -> String {
 fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>>{
     let elapsed = now.elapsed();
     let elapsed = elapsed.as_secs() as f32 + elapsed.subsec_millis() as f32 / 1000.0;
-    let mut event: ColoredString = format!("{:?}", ev.get_type()).red();
+    let mut event;
     let mut extra_data: String = "".to_string();
 
     match ev.get_type() {
         seq::EventType::Noteon => {
-            let data: seq::EvNote = ev.get_data().ok_or("Error resolving Note On Event")?;
+            let data: seq::EvNote = ev.get_data().ok_or("Error resolving event data")?;
             event = if data.velocity > 0 {
                 "Note ON ".green()
             } else {
                 "Note ON ".red()
             };
             extra_data = format!(
-                "Channel {} | {:<3} ({}) | {}",
+                "Channel {:2} | {:<3} ({}) | {}",
                 data.channel.to_string().white().dimmed(),
                 note_name(data.note),
                 data.note,
@@ -144,9 +144,9 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>
         },
         seq::EventType::Noteoff => {
             event = "Note OFF".red();
-            let data: seq::EvNote = ev.get_data().ok_or("Error resolving Note On Event")?;
+            let data: seq::EvNote = ev.get_data().ok_or("Error resolving event data")?;
             extra_data = format!(
-                "Channel {} | {:<3} ({}) | {}",
+                "Channel {:2} | {:<3} ({}) | {}",
                 data.channel.to_string().white().dimmed(),
                 note_name(data.note),
                 data.note,
@@ -154,18 +154,44 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>
             );
         },
         seq::EventType::Controller => {
-            let data: seq::EvCtrl = ev.get_data().ok_or("Error resolving Note On Event")?;
+            let data: seq::EvCtrl = ev.get_data().ok_or("Error resolving event data")?;
             event = "Controller Change".blue();
             extra_data = format!(
-                "Channel {} | CC {:3} | {:3} | {} ",
+                "Channel {:2} | CC {:3} | {:3} | {} ",
                 data.channel,
                 data.param,
                 data.value,
                 CC_MAP.get(&data.param).unwrap_or(&"Unknown".to_string()),
             );
         },
+        seq::EventType::Pitchbend => {
+            let data: seq::EvCtrl = ev.get_data().ok_or("Error resolving event data")?;
+            event = "Pitch Bend".purple();
+            extra_data = format!(
+                "Channel {:2} | {} ",
+                data.channel,
+                data.value,
+            );
+        },
+        seq::EventType::Pgmchange => {
+            let data: seq::EvCtrl = ev.get_data().ok_or("Error resolving event data")?;
+            event = "Program Change".purple();
+            extra_data = format!(
+                "{}",
+                data.value,
+            );
+        },
+        seq::EventType::Chanpress => {
+            let data: seq::EvCtrl = ev.get_data().ok_or("Error resolving event data")?;
+            event = "Channel Pressure".purple();
+            extra_data = format!(
+                "Channel {:2} | {}",
+                data.channel,
+                data.value,
+            );
+        }
         _ => {
-
+            event = format!("{:?}", ev.get_type()).red();
         }
     }
     println!(
