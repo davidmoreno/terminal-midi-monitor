@@ -123,18 +123,19 @@ fn note_name(note: u8) -> String {
 fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>>{
     let elapsed = now.elapsed();
     let elapsed = elapsed.as_secs() as f32 + elapsed.subsec_millis() as f32 / 1000.0;
+    let mut event: ColoredString = format!("{:?}", ev.get_type()).red();
+    let mut extra_data: String = "".to_string();
+
     match ev.get_type() {
         seq::EventType::Noteon => {
             let data: seq::EvNote = ev.get_data().ok_or("Error resolving Note On Event")?;
-            let name = if data.velocity > 0 {
+            event = if data.velocity > 0 {
                 "Note ON ".green()
             } else {
                 "Note ON ".red()
             };
-            println!(
-                "{:10.3} | {:>20} | Channel {} | {:<3} ({}) | {}",
-                elapsed,
-                name,
+            extra_data = format!(
+                "Channel {} | {:<3} ({}) | {}",
                 data.channel.to_string().white().dimmed(),
                 note_name(data.note),
                 data.note,
@@ -142,11 +143,10 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>
             );
         },
         seq::EventType::Noteoff => {
+            event = "Note OFF".red();
             let data: seq::EvNote = ev.get_data().ok_or("Error resolving Note On Event")?;
-            println!(
-                "{:10.3} | {:>20} | Channel {} | {:<3} ({}) | {}",
-                elapsed,
-                "Note OFF".red(),
+            extra_data = format!(
+                "Channel {} | {:<3} ({}) | {}",
                 data.channel.to_string().white().dimmed(),
                 note_name(data.note),
                 data.note,
@@ -155,185 +155,25 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>
         },
         seq::EventType::Controller => {
             let data: seq::EvCtrl = ev.get_data().ok_or("Error resolving Note On Event")?;
-            println!(
-                "{:10.3} | {:>20} | Channel {} | {} ({}) | {}",
-                elapsed,
-                "Controller Change".blue(),
+            event = "Controller Change".blue();
+            extra_data = format!(
+                "Channel {} | CC {:3} | {:3} | {} ",
                 data.channel,
-                CC_MAP.get(&data.param).unwrap_or(&"Unknown".to_string()),
                 data.param,
-                data.value
+                data.value,
+                CC_MAP.get(&data.param).unwrap_or(&"Unknown".to_string()),
             );
         },
-        seq::EventType::Pitchbend => {
-            println!("{}", "Pitchbend".red());
-        },
-        seq::EventType::Bounce => {
-            println!("{}", "Bounce".red());
-        },
-        seq::EventType::Chanpress => {
-            println!("{}", "Chanpress".red());
-        },
-        seq::EventType::ClientChange => {
-            println!("{}", "ClientChange".red());
-        },
-        seq::EventType::ClientExit => {
-            println!("{}", "ClientExit".red());
-        },
-        seq::EventType::ClientStart => {
-            println!("{}", "ClientStart".red());
-        },
-        seq::EventType::Clock => {
-            println!("{}", "Clock".red());
-        },
-        seq::EventType::Continue => {
-            println!("{}", "Continue".red());
-        },
-        seq::EventType::Control14 => {
-            println!("{}", "Control14".red());
-        },
-        seq::EventType::Echo => {
-            println!("{}", "Echo".red());
-        },
-        seq::EventType::Keypress => {
-            println!("{}", "Keypress".red());
-        },
-        seq::EventType::Keysign => {
-            println!("{}", "Keysign".red());
-        },
-        seq::EventType::None => {
-            println!("{}", "None".red());
-        },
-        seq::EventType::Nonregparam => {
-            println!("{}", "Nonregparam".red());
-        },
-        seq::EventType::Note => {
-            println!("{}", "Note".red());
-        },
-        seq::EventType::Oss => {
-            println!("{}", "Oss".red());
-        },
-        seq::EventType::Pgmchange => {
-            println!("{}", "Pgmchange".red());
-        },
-        seq::EventType::PortChange => {
-            println!("{}", "PortChange".red());
-        },
-        seq::EventType::PortExit => {
-            println!("{}", "PortExit".red());
-        },
-        seq::EventType::PortStart => {
-            println!("{}", "PortStart".red());
-        },
-        seq::EventType::PortSubscribed => {
-            println!("{}", "PortSubscribed".red());
-        },
-        seq::EventType::PortUnsubscribed => {
-            println!("{}", "PortUnsubscribed".red());
-        },
-        seq::EventType::Qframe => {
-            println!("{}", "Qframe".red());
-        },
-        seq::EventType::QueueSkew => {
-            println!("{}", "QueueSkew".red());
-        },
-        seq::EventType::Regparam => {
-            println!("{}", "Regparam".red());
-        },
-        seq::EventType::Reset => {
-            println!("{}", "Reset".red());
-        },
-        seq::EventType::Result => {
-            println!("{}", "Result".red());
-        },
-        seq::EventType::Sensing => {
-            println!("{}", "Sensing".red());
-        },
-        seq::EventType::SetposTick => {
-            println!("{}", "SetposTick".red());
-        },
-        seq::EventType::SetposTime => {
-            println!("{}", "SetposTime".red());
-        },
-        seq::EventType::Songpos => {
-            println!("{}", "Songpos".red());
-        },
-        seq::EventType::Songsel => {
-            println!("{}", "Songsel".red());
-        },
-        seq::EventType::Start => {
-            println!("{}", "Start".red());
-        },
-        seq::EventType::Stop => {
-            println!("{}", "Stop".red());
-        },
-        seq::EventType::SyncPos => {
-            println!("{}", "SyncPos".red());
-        },
-        seq::EventType::Sysex => {
-            println!("{}", "Sysex".red());
-        },
-        seq::EventType::System => {
-            println!("{}", "System".red());
-        },
-        seq::EventType::Tempo => {
-            println!("{}", "Tempo".red());
-        },
-        seq::EventType::Tick => {
-            println!("{}", "Tick".red());
-        },
-        seq::EventType::Timesign => {
-            println!("{}", "Timesign".red());
-        },
-        seq::EventType::TuneRequest => {
-            println!("{}", "TuneRequest".red());
-        },
-        seq::EventType::Usr0 => {
-            println!("{}", "Usr0".red());
-        },
-        seq::EventType::Usr1 => {
-            println!("{}", "Usr1".red());
-        },
-        seq::EventType::Usr2 => {
-            println!("{}", "Usr2".red());
-        },
-        seq::EventType::Usr3 => {
-            println!("{}", "Usr3".red());
-        },
-        seq::EventType::Usr4 => {
-            println!("{}", "Usr4".red());
-        },
-        seq::EventType::Usr5 => {
-            println!("{}", "Usr5".red());
-        },
-        seq::EventType::Usr6 => {
-            println!("{}", "Usr6".red());
-        },
-        seq::EventType::Usr7 => {
-            println!("{}", "Usr7".red());
-        },
-        seq::EventType::Usr8 => {
-            println!("{}", "Usr8".red());
-        },
-        seq::EventType::Usr9 => {
-            println!("{}", "Usr9".red());
-        },
-        seq::EventType::UsrVar0 => {
-            println!("{}", "UsrVar0".red());
-        },
-        seq::EventType::UsrVar1 => {
-            println!("{}", "UsrVar1".red());
-        },
-        seq::EventType::UsrVar2 => {
-            println!("{}", "UsrVar2".red());
-        },
-        seq::EventType::UsrVar3 => {
-            println!("{}", "UsrVar3".red());
-        },
-        seq::EventType::UsrVar4 => {
-            println!("{}", "UsrVar4".red());
+        _ => {
+
         }
     }
+    println!(
+        "{:10.3} | {:>20} | {}",
+        elapsed,
+        event,
+        extra_data
+    );
 
     Ok(())
 }
