@@ -1,6 +1,6 @@
 #[macro_use]
 extern crate lazy_static;
-
+extern crate clap;
 extern crate alsa;
 extern crate libc;
 
@@ -10,7 +10,7 @@ use std::ffi::CString;
 use colored::*;
 use std::collections::HashMap;
 use std::time::Instant;
-
+use clap::{Arg, App};
 
 lazy_static! {
     static ref CC_MAP: HashMap<u32, String> = build_cc_map();
@@ -86,7 +86,7 @@ fn build_cc_map() -> HashMap<u32, String> {
 }
 
 
-fn setup_alsaseq() -> Result<seq::Seq, Box<error::Error>>{
+fn setup_alsaseq() -> Result<(seq::Seq, i32), Box<error::Error>>{
     let seq = seq::Seq::open(None, Some(alsa::Direction::Capture), true)?;
     seq.set_client_name(&CString::new("Terminal MIDI Monitor")?)?;
 
@@ -96,9 +96,9 @@ fn setup_alsaseq() -> Result<seq::Seq, Box<error::Error>>{
     dinfo.set_name(&CString::new("Input")?);
     seq.create_port(&dinfo)?;
 
-    // let input_port = dinfo.get_port();
+    let input_port = dinfo.get_port();
 
-    Ok(seq)
+    Ok((seq, input_port))
 }
 
 fn note_name(note: u8) -> String {
@@ -205,10 +205,55 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event, origin: &str) -> Result<(), Box
     Ok(())
 }
 
+fn autoconnect_all(seq: &alsa::seq::Seq, port: i32) -> Result<(), Box<error::Error>> {
+    for from_info in seq::ClientIter::new(&seq){
+        for from_port in seq::PortIter::new(&seq, from_info.get_client()){
+            if from_port.get_capability().contains(seq::SUBS_READ) && !from_port.get_capability().contains(seq::NO_EXPORT){
+                let subs = seq::PortSubscribe::empty()?;
+                let sender = seq::Addr{ client: from_port.get_client(), port: from_port.get_port() };
+                subs.set_sender(sender);
+                subs.set_dest(seq::Addr{ client: seq.client_id()?, port: port });
+                match seq.subscribe_port(&subs) {
+                    Ok(_) => {
+                        println!("{} {}",
+                            "Connected and receiving data from".green(),
+                            format!("{}:{}",
+                                from_port.get_name()?,
+                                seq.get_any_port_info(sender)?.get_name()?.to_string()
+                            ).blue()
+                        );
+                    },
+                    Err(err) =>
+                        println!("ERROR: {:?}", err)
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<error::Error>> {
     println!("Terminal MIDI Monitor. (C) 2019 Coralbits SL. Licensed under GPL v3.");
+    let matches = App::new("Terminal MIDI Monitor")
+        .version("0.1.0")
+        .author("David Moreno <dmoreno@coralbits.com>")
+        .about("Terminal monitor for Alsa Seq MIDI events.")
+        .arg(
+            Arg::with_name("autoconnect")
+                .short("a")
+                .long("autoconnect")
+                .help("Autoconnects all outputs to the monitor. Also new clients are automatically connected.")
+            )
+        .get_matches();
+    let (seq, port) = setup_alsaseq()?;
 
-    let seq = setup_alsaseq()?;
+    let autoconnect = matches.occurrences_of("autoconnect") > 0;
+    if autoconnect {
+        println!("{}", "Autoconnect ON".yellow());
+        autoconnect_all(&seq, port)?;
+    }
+
     let mut input = seq.input();
 
     println!("Waiting for connections.");
