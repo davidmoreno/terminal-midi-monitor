@@ -120,7 +120,7 @@ fn note_name(note: u8) -> String {
     format!("{}{}", note_name, note / 12)
 }
 
-fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>>{
+fn print_midi_ev(now: &Instant, ev: &seq::Event, origin: &str) -> Result<(), Box<error::Error>>{
     let elapsed = now.elapsed();
     let elapsed = elapsed.as_secs() as f32 + elapsed.subsec_millis() as f32 / 1000.0;
     let mut event;
@@ -195,8 +195,9 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event) -> Result<(), Box<error::Error>
         }
     }
     println!(
-        "{:10.3} | {:>20} | {}",
+        "{:10.3} | {:20} | {:>17} | {}",
         elapsed,
+        origin,
         event,
         extra_data
     );
@@ -225,7 +226,13 @@ fn main() -> Result<(), Box<error::Error>> {
             continue;
         }
         let ev = input.event_input()?;
-        print_midi_ev(&now, &ev)?;
+
+        let origin = format!("{}:{}",
+            seq.get_any_client_info(ev.get_source().client)?.get_name()?.to_string(),
+            seq.get_any_port_info(ev.get_source())?.get_name()?.to_string(),
+        );
+
+        print_midi_ev(&now, &ev, &origin)?;
     };
 
     Ok(())
