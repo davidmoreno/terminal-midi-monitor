@@ -190,8 +190,15 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event, origin: &str) -> Result<(), Box
                 data.value,
             );
         }
+        seq::EventType::Clock => {
+            print!(
+                "{:10.3} | {:20} | {:>17}\r",
+                elapsed, origin, "Clock".purple()
+            );
+            return Ok(());
+        }
         _ => {
-            event = format!("{:?}", ev.get_type()).red();
+            event = format!("{:?}", ev).cyan();
         }
     }
     println!(
