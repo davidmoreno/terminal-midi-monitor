@@ -11,11 +11,21 @@ use colored::*;
 use std::collections::HashMap;
 use std::time::Instant;
 use clap::{Arg, App};
+use std::io;
+use std::io::prelude::*;
 
 lazy_static! {
     static ref CC_MAP: HashMap<u32, String> = build_cc_map();
 }
+const BPM_DAMPING: f64 = 0.03;
 
+struct MidiMonitor<'a> {
+    start_time: Instant,
+    seq: &'a seq::Seq,
+    last_clock: f64,
+    average_sec_per_clock: f64,  // Rolling average
+    clock_pos: i32, // Song position. once per clock.
+}
 
 // List from http://nickfever.com/music/midi-cc-list
 fn build_cc_map() -> HashMap<u32, String> {
@@ -120,11 +130,22 @@ fn note_name(note: u8) -> String {
     format!("{}{}", note_name, note / 12)
 }
 
-fn print_midi_ev(now: &Instant, ev: &seq::Event, origin: &str) -> Result<(), Box<error::Error>>{
-    let elapsed = now.elapsed();
-    let elapsed = elapsed.as_secs() as f32 + elapsed.subsec_millis() as f32 / 1000.0;
+fn get_origin(midi_monitor: &MidiMonitor, ev: &seq::Event) -> Result<String, Box<error::Error>> {
+    let source = ev.get_source();
+    let origin = format!("{}:{}",
+        midi_monitor.seq.get_any_client_info(source.client)?.get_name()?,
+        midi_monitor.seq.get_any_port_info(source)?.get_name()?,
+    );
+
+    Ok(origin)
+}
+
+fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), Box<error::Error>>{
+    let elapsed = midi_monitor.start_time.elapsed();
+    let elapsed: f64 = elapsed.as_secs() as f64 + elapsed.subsec_millis() as f64 / 1000.0;
     let mut event;
     let mut extra_data: String = "".to_string();
+    let origin = get_origin(&midi_monitor, &ev)?;
 
     match ev.get_type() {
         seq::EventType::Noteon => {
@@ -191,18 +212,43 @@ fn print_midi_ev(now: &Instant, ev: &seq::Event, origin: &str) -> Result<(), Box
             );
         }
         seq::EventType::Clock => {
-            print!(
-                "{:10.3} | {:20} | {:>17}\r",
-                elapsed, origin, "Clock".purple()
-            );
+            midi_monitor.clock_pos += 1;
+            midi_monitor.average_sec_per_clock =
+                ((elapsed - midi_monitor.last_clock) * BPM_DAMPING) +
+                midi_monitor.average_sec_per_clock as f64 * (1.0 - BPM_DAMPING);
+            midi_monitor.last_clock = elapsed;
+
+            // I hope RUST simplifies this.. as I prefer clean code.
+            let cs = 1.0 / midi_monitor.average_sec_per_clock;
+            let bs = cs / 24.0; // 24 clocks per beat -> beats per second
+            let bpm = bs * 60.0;
+
+            // Show only once per beat
+            if midi_monitor.clock_pos % 24 == 0 {
+                print!(
+                    "{:10.3} | {:20} | {:>17} | {:>3.1} BPM | Clock Position {}               \r",
+                    elapsed, origin, "Clock".purple(), bpm, midi_monitor.clock_pos
+                );
+                io::stdout().flush()?;
+            }
             return Ok(());
+        }
+        seq::EventType::Start => {
+            event = "Start".purple();
+            midi_monitor.clock_pos = 0;
+        }
+        seq::EventType::Stop => {
+            event = "Stop".purple();
+        }
+        seq::EventType::Continue => {
+            event = "Continue".purple();
         }
         _ => {
             event = format!("{:?}", ev).cyan();
         }
     }
     println!(
-        "{:10.3} | {:20} | {:>17} | {}",
+        "{:10.3} | {:20} | {:>17} | {}                                          ",
         elapsed,
         origin,
         event,
@@ -270,7 +316,13 @@ fn main() -> Result<(), Box<error::Error>> {
     let mut fds = Vec::<libc::pollfd>::new();
     fds.append(&mut seqp.get()?);
 
-    let now = Instant::now();
+    let mut midi_monitor = MidiMonitor{
+        start_time: Instant::now(),
+        seq: &seq,
+        average_sec_per_clock: (60.0 / 120.0) / 24.0,
+        last_clock: 0.0,
+        clock_pos: 0,
+    };
 
     loop {
         alsa::poll::poll(&mut fds, 1000)?;
@@ -279,12 +331,14 @@ fn main() -> Result<(), Box<error::Error>> {
         }
         let ev = input.event_input()?;
 
-        let origin = format!("{}:{}",
-            seq.get_any_client_info(ev.get_source().client)?.get_name()?.to_string(),
-            seq.get_any_port_info(ev.get_source())?.get_name()?.to_string(),
-        );
+        match print_midi_ev(&mut midi_monitor, &ev) {
+            Ok(()) => {
 
-        print_midi_ev(&now, &ev, &origin)?;
+            },
+            err => {
+                println!("{}", format!("ERROR: {:?}",err).red());
+            }
+        };
     };
 
     Ok(())
