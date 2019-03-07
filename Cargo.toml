@@ -1,6 +1,6 @@
 [package]
 name = "terminal-midi-monitor"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["David Moreno <dmoreno@coralbits.com>"]
 edition = "2018"
 description = "Terminal ALSA MIDI Sequencer MIDI Monitor"
