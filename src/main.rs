@@ -25,6 +25,9 @@ struct MidiMonitor<'a> {
     last_clock: f64,
     average_sec_per_clock: f64,  // Rolling average
     clock_pos: i32, // Song position. once per clock.
+    autoconnect: bool, // Whether to autoconnect to new ports
+    port: i32,
+    port_names: HashMap<seq::Addr, String>,
 }
 
 // List from http://nickfever.com/music/midi-cc-list
@@ -130,14 +133,59 @@ fn note_name(note: u8) -> String {
     format!("{}{}", note_name, note / 12)
 }
 
-fn get_origin(midi_monitor: &MidiMonitor, ev: &seq::Event) -> Result<String, Box<error::Error>> {
-    let source = ev.get_source();
-    let origin = format!("{}:{}",
-        midi_monitor.seq.get_any_client_info(source.client)?.get_name()?,
-        midi_monitor.seq.get_any_port_info(source)?.get_name()?,
-    );
+impl<'a> MidiMonitor<'a> {
+    fn get_origin(&mut self, ev: &seq::Event) -> Result<String, Box<error::Error>> {
+        let source = ev.get_source();
+        self.get_port_name(source)
+    }
+    fn get_port_name(&mut self, source: seq::Addr) -> Result<String, Box<error::Error>> {
+        match self.port_names.get(&source) {
+            Some(name) => {
+                return Ok(name.to_string())
+            }
+            None => {
+            }
+        }
 
-    Ok(origin)
+        let client_info = match self.seq.get_any_client_info(source.client) {
+            Ok(info) => info,
+            _ => {
+                return Ok(format!("{}:{}", source.client, source.port));
+            }
+        };
+        // Not in cache, calculate
+        let origin = format!("{}:{}",
+            client_info.get_name()?,
+            self.seq.get_any_port_info(source)?.get_name()?,
+        );
+        self.port_names.insert(source, origin);
+        let origin = self.port_names.get(&source).ok_or("WTF. I just inserted you.")?;
+        Ok(origin.to_string())
+    }
+    fn remove_port_name(&mut self, source: seq::Addr) {
+        self.port_names.remove(&source);
+    }
+    fn autoconnect_all(&mut self) -> Result<(), Box<error::Error>> {
+        let seq = self.seq;
+        for from_info in seq::ClientIter::new(&seq){
+            for from_port in seq::PortIter::new(&seq, from_info.get_client()){
+                if from_port.get_capability().contains(seq::SUBS_READ) && !from_port.get_capability().contains(seq::NO_EXPORT){
+                    let sender = seq::Addr{ client: from_port.get_client(), port: from_port.get_port() };
+                    self.connect_from(sender)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn connect_from(&mut self, sender: seq::Addr) -> Result<(), Box<error::Error>> {
+        let subs = seq::PortSubscribe::empty()?;
+        subs.set_sender(sender);
+        subs.set_dest(seq::Addr{ client: self.seq.client_id()?, port: self.port });
+        self.seq.subscribe_port(&subs)?;
+        Ok(())
+    }
 }
 
 fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), Box<error::Error>>{
@@ -145,7 +193,7 @@ fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), 
     let elapsed: f64 = elapsed.as_secs() as f64 + elapsed.subsec_millis() as f64 / 1000.0;
     let mut event;
     let mut extra_data: String = "".to_string();
-    let origin = get_origin(&midi_monitor, &ev)?;
+    let origin = midi_monitor.get_origin(&ev)?;
 
     match ev.get_type() {
         seq::EventType::Noteon => {
@@ -243,6 +291,48 @@ fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), 
         seq::EventType::Continue => {
             event = "Continue".purple();
         }
+        seq::EventType::ClientStart => {
+            event = "ClientStart".green();
+            let addr: seq::Addr = ev.get_data().ok_or("Expected address")?;
+            extra_data = format!("{}", midi_monitor.get_port_name(addr)?);
+        }
+        seq::EventType::PortStart => {
+            event = "PortStart".green();
+            let addr: seq::Addr = ev.get_data().ok_or("Expected address")?;
+            if midi_monitor.autoconnect {
+                midi_monitor.connect_from(addr)?;
+            }
+            extra_data = format!("{}", midi_monitor.get_port_name(addr)?);
+        }
+        seq::EventType::ClientExit => {
+            event = "ClientExit".red();
+            let addr: seq::Addr = ev.get_data().ok_or("Expected address")?;
+            extra_data = format!("{}", midi_monitor.get_port_name(addr)?);
+        }
+        seq::EventType::PortExit => {
+            event = "PortExit".red();
+            let addr: seq::Addr = ev.get_data().ok_or("Expected address")?;
+            extra_data = format!("{}", midi_monitor.get_port_name(addr)?);
+            midi_monitor.remove_port_name(addr);
+        }
+        seq::EventType::PortSubscribed => {
+            event = "PortSubscribed".green();
+            let conn: seq::Connect = ev.get_data().ok_or("Expected connection")?;
+            extra_data = format!(
+                "{:20} | {:20}",
+                midi_monitor.get_port_name(conn.sender)?,
+                midi_monitor.get_port_name(conn.dest)?
+            );
+        }
+        seq::EventType::PortUnsubscribed => {
+            event = "PortUnsubscribed".red();
+            let conn: seq::Connect = ev.get_data().ok_or("Expected connection")?;
+            extra_data = format!(
+                "{:20} | {:20}",
+                midi_monitor.get_port_name(conn.sender)?,
+                midi_monitor.get_port_name(conn.dest)?
+            );
+        }
         _ => {
             event = format!("{:?}", ev).cyan();
         }
@@ -258,33 +348,6 @@ fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), 
     Ok(())
 }
 
-fn autoconnect_all(seq: &alsa::seq::Seq, port: i32) -> Result<(), Box<error::Error>> {
-    for from_info in seq::ClientIter::new(&seq){
-        for from_port in seq::PortIter::new(&seq, from_info.get_client()){
-            if from_port.get_capability().contains(seq::SUBS_READ) && !from_port.get_capability().contains(seq::NO_EXPORT){
-                let subs = seq::PortSubscribe::empty()?;
-                let sender = seq::Addr{ client: from_port.get_client(), port: from_port.get_port() };
-                subs.set_sender(sender);
-                subs.set_dest(seq::Addr{ client: seq.client_id()?, port: port });
-                match seq.subscribe_port(&subs) {
-                    Ok(_) => {
-                        println!("{} {}",
-                            "Connected and receiving data from".green(),
-                            format!("{}:{}",
-                                from_port.get_name()?,
-                                seq.get_any_port_info(sender)?.get_name()?.to_string()
-                            ).blue()
-                        );
-                    },
-                    Err(err) =>
-                        println!("ERROR: {:?}", err)
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 fn main() -> Result<(), Box<error::Error>> {
     println!("Terminal MIDI Monitor. (C) 2019 Coralbits SL. Licensed under GPL v3.");
@@ -299,14 +362,9 @@ fn main() -> Result<(), Box<error::Error>> {
                 .help("Autoconnects all outputs to the monitor. Also new clients are automatically connected.")
             )
         .get_matches();
-    let (seq, port) = setup_alsaseq()?;
-
     let autoconnect = matches.occurrences_of("autoconnect") > 0;
-    if autoconnect {
-        println!("{}", "Autoconnect ON".yellow());
-        autoconnect_all(&seq, port)?;
-    }
 
+    let (seq, port) = setup_alsaseq()?;
     let mut input = seq.input();
 
     println!("Waiting for connections.");
@@ -322,23 +380,32 @@ fn main() -> Result<(), Box<error::Error>> {
         average_sec_per_clock: (60.0 / 120.0) / 24.0,
         last_clock: 0.0,
         clock_pos: 0,
+        autoconnect: autoconnect,
+        port: port,
+        port_names: HashMap::new()
     };
 
+    if autoconnect {
+        println!("{}", "Autoconnect ON".yellow());
+        midi_monitor.autoconnect_all()?;
+    }
+
+
     loop {
+        // FIXME For some events (PortStart,End...) this timeout limits how many to receive per loop.
         alsa::poll::poll(&mut fds, 1000)?;
-        if input.event_input_pending(true)? == 0 {
-            continue;
+        while input.event_input_pending(true)? != 0 {
+            let ev = input.event_input()?;
+
+            match print_midi_ev(&mut midi_monitor, &ev) {
+                Ok(()) => {
+
+                },
+                err => {
+                    println!("{}", format!("ERROR: {:?}",err).red());
+                }
+            };
         }
-        let ev = input.event_input()?;
-
-        match print_midi_ev(&mut midi_monitor, &ev) {
-            Ok(()) => {
-
-            },
-            err => {
-                println!("{}", format!("ERROR: {:?}",err).red());
-            }
-        };
     };
 
     Ok(())
