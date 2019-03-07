@@ -45,6 +45,8 @@ struct MidiMonitor<'a> {
     autoconnect: bool, // Whether to autoconnect to new ports
     port: i32,
     port_names: HashMap<seq::Addr, String>,
+    // Whether last line was reused (midi clock) This is used to, if next is not the same type, do new line first.
+    reused_line: bool,
 }
 
 // List from http://nickfever.com/music/midi-cc-list
@@ -295,6 +297,7 @@ fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), 
                     elapsed, origin, "Clock".purple(), bpm, midi_monitor.clock_pos
                 );
                 io::stdout().flush()?;
+                midi_monitor.reused_line = true;
             }
             return Ok(());
         }
@@ -354,6 +357,10 @@ fn print_midi_ev(midi_monitor: &mut MidiMonitor, ev: &seq::Event) -> Result<(), 
             event = format!("{:?}", ev).cyan();
         }
     }
+    if midi_monitor.reused_line {
+        midi_monitor.reused_line = false;
+        println!();
+    }
     println!(
         "{:10.3} | {:20} | {:>17} | {}                                          ",
         elapsed,
@@ -399,7 +406,8 @@ fn main() -> Result<(), Box<error::Error>> {
         clock_pos: 0,
         autoconnect: autoconnect,
         port: port,
-        port_names: HashMap::new()
+        port_names: HashMap::new(),
+        reused_line: false,
     };
 
     if autoconnect {
